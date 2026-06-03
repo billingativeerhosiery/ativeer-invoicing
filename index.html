@@ -8,8 +8,8 @@
 <title>Ativeer Hosiery — Invoice Manager</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.47.0/tabler-icons.min.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js" defer></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
 :root{
@@ -29,7 +29,7 @@ input,select{font-family:var(--fs);font-size:16px;color:var(--tx);background:var
 input:focus,select:focus{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px rgba(26,43,74,0.1)}
 input::placeholder{color:var(--tx3)}
 button{font-family:var(--fs);cursor:pointer;-webkit-appearance:none}
-select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:36px}
+select{background-image:url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2714%27 height=%2714%27 viewBox=%270 0 24 24%27 fill=%27none%27 stroke=%27%23666%27 stroke-width=%272%27%3E%3Cpath d=%27M6 9l6 6 6-6%27/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:36px}
 #hdr{position:fixed;top:0;left:0;right:0;height:var(--hdr);background:var(--navy);color:#fff;display:flex;align-items:center;justify-content:space-between;padding:0 16px;z-index:200;box-shadow:0 2px 10px rgba(0,0,0,0.2)}
 .hdr-brand{display:flex;align-items:center;gap:8px}
 .hdr-brand-name{font-family:var(--fse);font-size:17px;letter-spacing:1.5px;font-weight:700}
@@ -161,11 +161,20 @@ const CO = {
 const ONES=["","One","Two","Three","Four","Five","Six","Seven","Eight","Nine","Ten","Eleven","Twelve","Thirteen","Fourteen","Fifteen","Sixteen","Seventeen","Eighteen","Nineteen"],TENS=["","","Twenty","Thirty","Forty","Fifty","Sixty","Seventy","Eighty","Ninety"];
 function hw(n){if(!n)return"";if(n<20)return ONES[n]+" ";if(n<100)return TENS[~~(n/10)]+(n%10?" "+ONES[n%10]:"")+" ";return ONES[~~(n/100)]+" Hundred "+hw(n%100);}
 function toWords(n){n=Math.round(n);if(!n)return"Zero Only";let r="";if(n>=10000000){r+=hw(~~(n/10000000))+"Crore ";n%=10000000;}if(n>=100000){r+=hw(~~(n/100000))+"Lakh ";n%=100000;}if(n>=1000){r+=hw(~~(n/1000))+"Thousand ";n%=1000;}r+=hw(n);return r.trim().replace(/\s+/g," ")+" Only";}
+
+// ═══════════════════════════════════════════════════════
+// IST DATE / FINANCIAL YEAR UTILITIES
+// ═══════════════════════════════════════════════════════
+function getNowIST(){const n=new Date();return new Date(n.getTime()+n.getTimezoneOffset()*60000+5.5*3600000);}
+function getFY(d){d=d||getNowIST();const y=d.getFullYear(),m=d.getMonth()+1;if(m>=4)return String(y).slice(2)+String(y+1).slice(2);return String(y-1).slice(2)+String(y).slice(2);}
+function getMonthStr(d){d=d||getNowIST();return String(d.getMonth()+1).padStart(2,'0');}
+function todayISTISO(){const d=getNowIST();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+function fmtDateIST(iso){if(!iso)return'';try{const[y,m,dd]=iso.split('-');return dd+'-'+m+'-'+y;}catch(e){return iso;}}
 const uid=()=>Math.random().toString(36).slice(2,8);
 const mkItem=()=>({id:uid(),brand:"",boxes:"",desc:"",hsn:"",rate:"",amount:0});
-const todayISO=()=>new Date().toISOString().split("T")[0];
+
 const inr=(n)=>parseFloat(n||0).toLocaleString("en-IN",{minimumFractionDigits:2,maximumFractionDigits:2});
-const fmtDate=(d)=>{if(!d)return"";try{const[y,m,dy]=d.split("-");return dy+"-"+m+"-"+y;}catch(e){return d;}};
+;
 
 // ═══════════════════════════════════════════════════════
 // DATA
@@ -176,9 +185,59 @@ let MASTER={
   locations:[{id:"loc1",name:"Delhi"},{id:"loc2",name:"Mumbai"},{id:"loc3",name:"Surat"}],
   transporters:[{id:"tr1",name:"MALHOTRA TRANSPORT"},{id:"tr2",name:"VRL LOGISTICS"}]
 };
-let INV={no:"",date:todayISO(),sc:CO.sc,custId:"",fromLoc:"Delhi",toLoc:"",rrNo:"",marks:"",noPack:"",weight:"",despBy:"",dosDate:"",freight:"",vehicleNo:"",items:[mkItem()],disc1:"",disc2Pct:"",discDesc:"",cgstR:"",sgstR:"",igstR:"5",ro:""};
-let STATE={tab:"invoice",mTab:"customers",cf:{name:"",addr:"",gstin:"",sc:""},pf:{brand:"",desc:"",hsn:"",rate:""},locF:{name:""},trF:{name:""},cfEdit:null,pfEdit:null,locEdit:null,trEdit:null,dashF:{year:"",month:"",date:"",cust:"",brand:"",sort:"date-desc"},billF:{year:"",month:"",date:"",cust:"",brand:""}};
+let INV={no:"",date:todayISTISO(),sc:CO.sc,custId:"",fromLoc:"Delhi",toLoc:"",rrNo:"",marks:"",noPack:"",weight:"",despBy:"",dosDate:"",freight:"",vehicleNo:"",items:[mkItem()],disc1:"",disc2Pct:"",discDesc:"",cgstR:"",sgstR:"",igstR:"5",ro:""};
+let STATE={tab:"invoice",mTab:"customers",billTab:"active",cf:{name:"",addr:"",gstin:"",sc:""},pf:{brand:"",desc:"",hsn:"",rate:""},locF:{name:""},trF:{name:""},cfEdit:null,pfEdit:null,locEdit:null,trEdit:null,dashF:{year:"",month:"",date:"",cust:"",brand:"",sort:"date-desc"},billF:{year:"",month:"",date:"",cust:"",brand:""}};
 let INVOICES=[];
+let DELETED_INVOICES=[];
+let COUNTER={fy:'',lastNum:0,usedNums:[]};
+let counterFileId=null;
+// ═══════════════════════════════════════════════════════
+// INVOICE NUMBERING
+// ═══════════════════════════════════════════════════════
+function getSuggestedInvNo(){
+  const fy=getFY(),mo=getMonthStr();
+  const c=COUNTER.fy===fy?COUNTER:{fy,lastNum:0,usedNums:[]};
+  const used=new Set(c.usedNums||[]);
+  let n=c.lastNum+1;
+  while(used.has(n))n++;
+  return fy+'/'+mo+'/'+String(n).padStart(3,'0');
+}
+function confirmInvNo(no){
+  const fy=getFY();
+  if(COUNTER.fy!==fy)COUNTER={fy,lastNum:0,usedNums:[]};
+  const used=new Set(COUNTER.usedNums||[]);
+  const parts=no.split('/');
+  const n=parseInt(parts[2]||'0');
+  if(n>COUNTER.lastNum)COUNTER.lastNum=n;
+  used.add(n);
+  COUNTER.usedNums=[...used];
+  saveLocalCounter();
+  if(isSignedIn)scheduleSaveCounter();
+}
+function reserveDeletedNo(no){
+  // Keep deleted numbers reserved forever
+  const parts=no.split('/');
+  const noFY=parts[0];const n=parseInt(parts[2]||'0');
+  if(COUNTER.fy===noFY){const used=new Set(COUNTER.usedNums||[]);used.add(n);COUNTER.usedNums=[...used];saveLocalCounter();}
+}
+function isDuplicateNo(no){
+  return INVOICES.some(x=>x.invoiceNo===no)||DELETED_INVOICES.some(x=>x.invoiceNo===no);
+}
+function saveLocalCounter(){
+  try{localStorage.setItem('ah_counter_v7',JSON.stringify(COUNTER));}catch(e){}
+}
+function loadLocalCounter(){
+  try{const r=localStorage.getItem('ah_counter_v7');if(r)COUNTER=JSON.parse(r);}catch(e){}
+}
+let counterSaveTimeout=null;
+function scheduleSaveCounter(){
+  if(counterSaveTimeout)clearTimeout(counterSaveTimeout);
+  counterSaveTimeout=setTimeout(()=>saveJsonToDrive('counter.json',COUNTER,counterFileId,(id)=>{counterFileId=id;}),1500);
+}
+
+let invoicesFolderId=null;
+let deletedFolderId=null;
+let masterLastModified=null;
 let CHARTS={};
 let PENDING_CHARTS=null;
 
@@ -252,19 +311,35 @@ async function driveReq(url,opts={}){
   return r;
 }
 
+async function getOrCreateFolder(parentId,name){
+  let q=parentId?`'${parentId}' in parents and `:'';
+  q+=`name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+  const r=await driveReq(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id)`);
+  const d=await r.json();
+  if(d.files&&d.files.length>0)return d.files[0].id;
+  const body={name,mimeType:'application/vnd.google-apps.folder'};
+  if(parentId)body.parents=[parentId];
+  const cr=await driveReq('https://www.googleapis.com/drive/v3/files',{method:'POST',body:JSON.stringify(body)});
+  return(await cr.json()).id;
+}
+async function saveJsonToDrive(fname,data,existingId,onSaved,parentId){
+  const pid=parentId||driveFolder;if(!pid||!gToken)return;
+  const boundary='ah_bound_42';
+  const meta=existingId?{}:{name:fname,parents:[pid]};
+  const body='--'+boundary+'\r\nContent-Type: application/json\r\n\r\n'+JSON.stringify(meta)+'\r\n--'+boundary+'\r\nContent-Type: application/json\r\n\r\n'+JSON.stringify(data)+'\r\n--'+boundary+'--';
+  const url=existingId?`https://www.googleapis.com/upload/drive/v3/files/${existingId}?uploadType=multipart`:'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
+  const method=existingId?'PATCH':'POST';
+  const r=await fetch(url,{method,headers:{Authorization:'Bearer '+gToken,'Content-Type':'multipart/related; boundary='+boundary},body});
+  const rd=await r.json();
+  if(onSaved)onSaved(rd.id||existingId);
+  return rd.id||existingId;
+}
 async function initDriveFolder(){
   try{
     setSyncStatus('syncing');
-    // Find or create folder
-    let r=await driveReq(`https://www.googleapis.com/drive/v3/files?q=name='${FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false&fields=files(id,name)`);
-    let d=await r.json();
-    if(d.files&&d.files.length>0){
-      driveFolder=d.files[0].id;
-    } else {
-      let cr=await driveReq('https://www.googleapis.com/drive/v3/files',{method:'POST',body:JSON.stringify({name:FOLDER_NAME,mimeType:'application/vnd.google-apps.folder'})});
-      let cd=await cr.json();
-      driveFolder=cd.id;
-    }
+    driveFolder=await getOrCreateFolder(null,FOLDER_NAME);
+    invoicesFolderId=await getOrCreateFolder(driveFolder,'invoices');
+    deletedFolderId=await getOrCreateFolder(driveFolder,'deleted');
     await loadFromDrive();
     setSyncStatus('ok');
     showToast('✅ Connected to Google Drive!');
@@ -278,44 +353,121 @@ async function initDriveFolder(){
 async function loadFromDrive(){
   if(!driveFolder||!gToken)return;
   try{
-    // Load master
-    let r=await driveReq(`https://www.googleapis.com/drive/v3/files?q='${driveFolder}' in parents and name='master.json' and trashed=false&fields=files(id)`);
+    // Load master.json
+    let r=await driveReq(`https://www.googleapis.com/drive/v3/files?q='${driveFolder}' in parents and name='master.json' and trashed=false&fields=files(id,modifiedTime)`);
     let d=await r.json();
     if(d.files&&d.files.length>0){
       masterFileId=d.files[0].id;
-      let fr=await driveReq(`https://www.googleapis.com/drive/v3/files/${masterFileId}?alt=media`);
+      masterLastModified=d.files[0].modifiedTime;
+      const fr=await driveReq(`https://www.googleapis.com/drive/v3/files/${masterFileId}?alt=media`);
       MASTER=await fr.json();
     }
-    // Load invoices
-    let r2=await driveReq(`https://www.googleapis.com/drive/v3/files?q='${driveFolder}' in parents and name='invoices.json' and trashed=false&fields=files(id)`);
-    let d2=await r2.json();
-    if(d2.files&&d2.files.length>0){
-      invoicesFileId=d2.files[0].id;
-      let fr2=await driveReq(`https://www.googleapis.com/drive/v3/files/${invoicesFileId}?alt=media`);
-      INVOICES=await fr2.json();
+    // Load counter.json
+    let rc=await driveReq(`https://www.googleapis.com/drive/v3/files?q='${driveFolder}' in parents and name='counter.json' and trashed=false&fields=files(id)`);
+    let dc=await rc.json();
+    if(dc.files&&dc.files.length>0){
+      counterFileId=dc.files[0].id;
+      const fc=await driveReq(`https://www.googleapis.com/drive/v3/files/${counterFileId}?alt=media`);
+      COUNTER=await fc.json();
+    }
+    // Load invoices from invoices/ subfolder
+    if(invoicesFolderId){
+      let ri=await driveReq(`https://www.googleapis.com/drive/v3/files?q='${invoicesFolderId}' in parents and trashed=false&fields=files(id,name)&pageSize=1000`);
+      let di=await ri.json();
+      const files=di.files||[];
+      if(files.length>0){
+        const loaded=await Promise.all(files.map(async f=>{
+          try{const fr=await driveReq(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`);return await fr.json();}catch(e){return null;}
+        }));
+        INVOICES=loaded.filter(Boolean).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+      }
+    }
+    // Load deleted invoices
+    if(deletedFolderId){
+      let rd=await driveReq(`https://www.googleapis.com/drive/v3/files?q='${deletedFolderId}' in parents and trashed=false&fields=files(id,name)&pageSize=1000`);
+      let dd=await rd.json();
+      const dfiles=dd.files||[];
+      if(dfiles.length>0){
+        const dloaded=await Promise.all(dfiles.map(async f=>{
+          try{const fr=await driveReq(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`);return await fr.json();}catch(e){return null;}
+        }));
+        DELETED_INVOICES=dloaded.filter(Boolean);
+        // Ensure deleted numbers are reserved in counter
+        DELETED_INVOICES.forEach(inv=>{if(inv.invoiceNo)reserveDeletedNo(inv.invoiceNo);});
+      }
     }
     render();
-  }catch(e){console.error('Load from Drive failed',e);}
+  }catch(e){console.error('Load from Drive failed',e);showToast('Could not load from Drive. Check connection.');}
 }
 
 async function saveToDrive(type){
   if(!driveFolder||!gToken)return;
   setSyncStatus('syncing');
   try{
-    const isMaster=type==='master';
-    const fname=isMaster?'master.json':'invoices.json';
-    const data=JSON.stringify(isMaster?MASTER:INVOICES);
-    let fid=isMaster?masterFileId:invoicesFileId;
-    const boundary='foo_bar_baz';
-    const body='--'+boundary+'\r\nContent-Type: application/json\r\n\r\n'+JSON.stringify({name:fname,parents:fid?undefined:[driveFolder]})+'\r\n--'+boundary+'\r\nContent-Type: application/json\r\n\r\n'+data+'\r\n--'+boundary+'--';
-    let url=fid?`https://www.googleapis.com/upload/drive/v3/files/${fid}?uploadType=multipart`:'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
-    let method=fid?'PATCH':'POST';
-    let r=await fetch(url,{method,headers:{Authorization:'Bearer '+gToken,'Content-Type':'multipart/related; boundary='+boundary},body});
-    let rd=await r.json();
-    if(isMaster)masterFileId=rd.id||masterFileId;
-    else invoicesFileId=rd.id||invoicesFileId;
+    if(type==='master'){
+      // Conflict check
+      if(masterFileId){
+        const mr=await driveReq(`https://www.googleapis.com/drive/v3/files/${masterFileId}?fields=modifiedTime`);
+        const md=await mr.json();
+        if(masterLastModified&&md.modifiedTime&&md.modifiedTime!==masterLastModified){
+          showConflictDialog();return;
+        }
+      }
+      const newId=await saveJsonToDrive('master.json',MASTER,masterFileId,(id)=>{masterFileId=id;});
+      // Update modifiedTime after save
+      if(newId){const mr2=await driveReq(`https://www.googleapis.com/drive/v3/files/${newId}?fields=modifiedTime`);const md2=await mr2.json();masterLastModified=md2.modifiedTime;}
+    }
     setSyncStatus('ok');
   }catch(e){setSyncStatus('error');console.error('Save to Drive failed',e);}
+}
+async function saveInvoiceToDrive(invoice){
+  if(!invoicesFolderId||!gToken)return;
+  try{
+    const fname=invoice.invoiceNo.replace(/\//g,'-')+'.json';
+    const r=await driveReq(`https://www.googleapis.com/drive/v3/files?q=name='${fname}' and '${invoicesFolderId}' in parents and trashed=false&fields=files(id)`);
+    const d=await r.json();
+    const existingId=d.files&&d.files.length>0?d.files[0].id:null;
+    await saveJsonToDrive(fname,invoice,existingId,null,invoicesFolderId);
+    setSyncStatus('ok');
+  }catch(e){setSyncStatus('error');console.error('Save invoice to Drive failed',e);}
+}
+async function moveInvoiceToDeleted(invoice){
+  if(!deletedFolderId||!gToken)return;
+  try{
+    const fname=invoice.invoiceNo.replace(/\//g,'-')+'.json';
+    // Save to deleted folder
+    await saveJsonToDrive(fname,invoice,null,null,deletedFolderId);
+    // Trash from invoices folder
+    const r=await driveReq(`https://www.googleapis.com/drive/v3/files?q=name='${fname}' and '${invoicesFolderId}' in parents and trashed=false&fields=files(id)`);
+    const d=await r.json();
+    if(d.files&&d.files.length>0){
+      await driveReq(`https://www.googleapis.com/drive/v3/files/${d.files[0].id}`,{method:'DELETE'});
+    }
+  }catch(e){console.error('Move to deleted failed',e);}
+}
+async function restoreInvoiceFromDeleted(invoice){
+  if(!invoicesFolderId||!gToken)return;
+  try{
+    const fname=invoice.invoiceNo.replace(/\//g,'-')+'.json';
+    // Save back to invoices folder
+    delete invoice.deletedAt;
+    await saveJsonToDrive(fname,invoice,null,null,invoicesFolderId);
+    // Remove from deleted folder
+    const r=await driveReq(`https://www.googleapis.com/drive/v3/files?q=name='${fname}' and '${deletedFolderId}' in parents and trashed=false&fields=files(id)`);
+    const d=await r.json();
+    if(d.files&&d.files.length>0){
+      await driveReq(`https://www.googleapis.com/drive/v3/files/${d.files[0].id}`,{method:'DELETE'});
+    }
+  }catch(e){console.error('Restore invoice failed',e);}
+}
+function showConflictDialog(){
+  const msg='⚠️ Master data was updated by another user while you were editing.\n\nOptions:\n[OK] = Reload their version (your unsaved changes lost)\n[Cancel] = Keep your changes and overwrite theirs';
+  if(confirm(msg)){
+    loadFromDrive();
+  } else {
+    // Force save our version
+    saveJsonToDrive('master.json',MASTER,masterFileId,(id)=>{masterFileId=id;});
+  }
 }
 
 function scheduleSave(type){
@@ -327,16 +479,20 @@ function scheduleSave(type){
 // LOCAL STORAGE FALLBACK
 // ═══════════════════════════════════════════════════════
 function loadLocal(){
-  try{const r=localStorage.getItem("ah_master_v6");if(r)MASTER=JSON.parse(r);}catch(e){}
-  try{const r=localStorage.getItem("ah_invoices_v6");if(r)INVOICES=JSON.parse(r);}catch(e){}
+  try{const r=localStorage.getItem("ah_master_v7");if(r)MASTER=JSON.parse(r);}catch(e){}
+  try{const r=localStorage.getItem("ah_invoices_v7");if(r)INVOICES=JSON.parse(r);}catch(e){}
+  try{const r=localStorage.getItem("ah_deleted_v7");if(r)DELETED_INVOICES=JSON.parse(r);}catch(e){}
+  loadLocalCounter();
 }
 function saveLocalMaster(){
-  try{localStorage.setItem("ah_master_v6",JSON.stringify(MASTER));}catch(e){}
+  try{localStorage.setItem("ah_master_v7",JSON.stringify(MASTER));}catch(e){}
   if(isSignedIn)scheduleSave('master');
 }
 function saveLocalInvoices(){
-  try{localStorage.setItem("ah_invoices_v6",JSON.stringify(INVOICES));}catch(e){}
-  if(isSignedIn)scheduleSave('invoices');
+  try{localStorage.setItem("ah_invoices_v7",JSON.stringify(INVOICES));}catch(e){}
+}
+function saveLocalDeleted(){
+  try{localStorage.setItem("ah_deleted_v7",JSON.stringify(DELETED_INVOICES));}catch(e){}
 }
 
 // JSON backup/restore
@@ -344,7 +500,7 @@ function exportJSON(){
   const data={master:MASTER,invoices:INVOICES,exportedAt:new Date().toISOString()};
   const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);
-  a.download='ativeer_backup_'+todayISO()+'.json';a.click();
+  a.download='ativeer_backup_'+todayISTISO()+'.json';a.click();
   showToast('Backup downloaded!');
 }
 function importJSON(){
@@ -467,8 +623,9 @@ function billHTML(copyLabel){
     '</td><td style="'+cs+';text-align:right">'+(it.rate?it.rate+'/-':'')+
     '</td>'+aPair(parseFloat(it.amount)||0)+'</tr>'
   ).join('');
+  const ROWS_PER_PAGE=18;
   const filledRows=INV.items.length;
-  const emptyCount=Math.max(0,26-filledRows);
+  const emptyCount=Math.max(0,ROWS_PER_PAGE-filledRows);
   const eRows=Array.from({length:emptyCount}).map(()=>
     '<tr><td style="border:1px solid #000;height:18px"></td><td style="border:1px solid #000"></td>'+
     '<td style="border:1px solid #000"></td><td style="border:1px solid #000"></td>'+
@@ -496,15 +653,19 @@ function billHTML(copyLabel){
         '<td style="'+cs+';text-align:right">-'+T.d1.toFixed(2)+'</td>'+
         '<td style="border:1px solid #000;width:22px"></td></tr>';
     }
-    // Row 3: After disc1 subtotal + Further Discount %
+    // Rows for Further Discount
     if(T.d2>0){
+      // Row: intermediate subtotal after disc1 (only if disc1 also present)
+      if(T.d1>0){
+        discRows+='<tr><td colspan="2" style="'+cs+'"></td>'+
+          '<td style="'+cs+'"></td>'+
+          '<td colspan="2" style="'+cs+'"></td>'+
+          '<td style="'+cs+';text-align:right">'+T.afterD1.toFixed(2)+'</td>'+
+          '<td style="border:1px solid #000;width:22px"></td></tr>';
+      }
+      // Row: "Further Discount (X%)" label AND deduction on SAME row
       discRows+='<tr><td colspan="2" style="'+cs+'"></td>'+
         '<td style="'+cs+';text-align:right">Further Discount ('+T.d2Pct+'%)</td>'+
-        '<td colspan="2" style="'+cs+'"></td>'+
-        '<td style="'+cs+';text-align:right">'+T.afterD1.toFixed(2)+'</td>'+
-        '<td style="border:1px solid #000;width:22px"></td></tr>';
-      discRows+='<tr><td colspan="2" style="'+cs+'"></td>'+
-        '<td style="'+cs+'"></td>'+
         '<td colspan="2" style="'+cs+'"></td>'+
         '<td style="'+cs+';text-align:right">-'+T.d2.toFixed(2)+'</td>'+
         '<td style="border:1px solid #000;width:22px"></td></tr>';
@@ -541,7 +702,7 @@ function billHTML(copyLabel){
     tRow('DATE OF SUPPLY',INV.dosDate)+
     tRow2('Freight Charges',INV.freight,'Vehicle No.',INV.vehicleNo);
 
-  return '<div style="background:#fff;width:100%;font-family:\'Times New Roman\',serif;font-size:10.5px;color:#000;border:2px solid #000;box-sizing:border-box;padding:10px 12px;min-height:277mm">'+
+  return '<div style="background:#fff;width:100%;font-family:\'Times New Roman\',serif;font-size:10.5px;color:#000;border:2px solid #000;box-sizing:border-box;padding:10px 12px">'+
     '<table style="width:100%;border-collapse:collapse;margin-bottom:3px;table-layout:fixed"><tr>'+
     '<td style="border:none;font-size:9.5px;width:38%;vertical-align:middle">GSTIN : '+CO.gstin+'</td>'+
     '<td style="border:none;width:24%;text-align:center;font-size:9px;vertical-align:middle;line-height:1.5">\u0950 \u0902 \u0939\u094d\u0930\u0940\u0902 \u0936\u094d\u0930\u0940 \u092a\u093e\u0930\u094d\u0936\u094d\u0935\u0928\u093e\u0925\u093e\u092f \u0928\u092e\u0903 \u0950<br/><strong style="font-size:10.5px;letter-spacing:1px">TAX INVOICE</strong></td>'+
@@ -554,7 +715,7 @@ function billHTML(copyLabel){
     '<table style="width:100%;border-collapse:collapse;margin-top:4px;margin-bottom:3px"><tr>'+
     '<td style="border:none;font-size:10.5px;width:30%">Invoice No. &nbsp;<strong>'+INV.no+'</strong></td>'+
     '<td style="border:none;text-align:center;font-size:10.5px">State Code : &nbsp;'+INV.sc+'</td>'+
-    '<td style="border:none;text-align:right;font-size:10.5px">Dated &nbsp;'+(fmtDate(INV.date)||INV.date)+'</td>'+
+    '<td style="border:none;text-align:right;font-size:10.5px">Dated &nbsp;'+(fmtDateIST(INV.date)||INV.date)+'</td>'+
     '</tr></table>'+
     '<table style="width:100%;border-collapse:collapse;border:1px solid #000"><tr>'+
     '<td style="border-right:1px solid #000;padding:4px 8px;width:52%;vertical-align:top">'+recvLeft+'</td>'+
@@ -622,12 +783,21 @@ function doExcel(){
 // ═══════════════════════════════════════════════════════
 function submitInvoice(){
   if(!INV.no){alert('Please enter Invoice No. before submitting.');return;}
-  if(INVOICES.find(x=>x.invoiceNo===INV.no)&&!confirm('Invoice #'+INV.no+' already submitted. Overwrite?')){return;}
+  // Duplicate check — active invoices
+  const existingActive=INVOICES.find(x=>x.invoiceNo===INV.no);
+  if(existingActive&&!confirm('Invoice #'+INV.no+' already submitted. Edit existing record?')){return;}
+  // Deleted number check
+  const existingDeleted=DELETED_INVOICES.find(x=>x.invoiceNo===INV.no);
+  if(existingDeleted){alert('❌ Invoice #'+INV.no+' was previously deleted and cannot be reused.\nPlease use a new invoice number.');return;}
+  // Confirm number in counter
+  confirmInvNo(INV.no);
   INVOICES=INVOICES.filter(x=>x.invoiceNo!==INV.no);
   const T=calc(),cust=getCust();
-  INVOICES.push({id:uid(),submittedAt:new Date().toISOString(),invoiceNo:INV.no,date:INV.date,custId:INV.custId,custName:cust?cust.name:'',items:JSON.parse(JSON.stringify(INV.items)),discDesc:INV.discDesc,disc1:INV.disc1,disc2Pct:INV.disc2Pct,cgstR:INV.cgstR,sgstR:INV.sgstR,igstR:INV.igstR,ro:INV.ro,totals:T,snapshot:JSON.parse(JSON.stringify(INV))});
+  const record={id:uid(),submittedAt:new Date().toISOString(),invoiceNo:INV.no,date:INV.date,custId:INV.custId,custName:cust?cust.name:'',items:JSON.parse(JSON.stringify(INV.items)),discDesc:INV.discDesc,disc1:INV.disc1,disc2Pct:INV.disc2Pct,cgstR:INV.cgstR,sgstR:INV.sgstR,igstR:INV.igstR,ro:INV.ro,totals:T,snapshot:JSON.parse(JSON.stringify(INV))};
+  INVOICES.push(record);
   saveLocalInvoices();
-  showToast('Invoice #'+INV.no+' recorded!'+(isSignedIn?' Syncing to Drive...':''));
+  if(isSignedIn)saveInvoiceToDrive(record);
+  showToast('Invoice #'+INV.no+' recorded!'+(isSignedIn?' Saved to Drive!':''));
 }
 
 // ═══════════════════════════════════════════════════════
@@ -878,37 +1048,62 @@ function renderDashboard(){
 // ═══════════════════════════════════════════════════════
 // RENDER PAST BILLS
 // ═══════════════════════════════════════════════════════
-function renderBills(){
-  const F=STATE.billF;
-  const years=[...new Set(INVOICES.map(r=>r.date?r.date.slice(0,4):'').filter(Boolean))].sort().reverse();
-  const MONTHS=[['01','Jan'],['02','Feb'],['03','Mar'],['04','Apr'],['05','May'],['06','Jun'],['07','Jul'],['08','Aug'],['09','Sep'],['10','Oct'],['11','Nov'],['12','Dec']];
-  let data=filterInvoices(F,[...INVOICES]).sort((a,b)=>b.date.localeCompare(a.date));
-  const SEL='padding:8px 36px 8px 12px;font-size:13px;background:var(--bg2);border:1.5px solid var(--bd2);border-radius:var(--r);color:var(--tx);cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'14\' height=\'14\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'%23666\' stroke-width=\'2\'%3E%3Cpath d=\'M6 9l6 6 6-6\'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;-webkit-appearance:none';
-  const INP='padding:8px 12px;font-size:13px;background:var(--bg2);border:1.5px solid var(--bd2);border-radius:var(--r);color:var(--tx)';
-  const rows=data.map(r=>'<div class="bill-list-item">'+
+function billRow(r){
+  const id=r.id;
+  return '<div class="bill-list-item" onclick="viewBill(this.dataset.id)" data-id="'+id+'">'+
     '<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">'+
     '<div><div style="font-weight:600;font-size:15px">Invoice #'+r.invoiceNo+'</div>'+
     '<div style="font-size:13px;color:var(--tx2);margin-top:2px">'+(r.custName||'(no customer)')+'</div>'+
-    '<div style="font-size:12px;color:var(--tx3);margin-top:2px">'+r.date+' &middot; '+r.items.length+' item(s) &middot; '+r.items.reduce((s,i)=>s+(parseFloat(i.boxes)||0),0)+' Doz</div></div>'+
-    '<div style="text-align:right"><div style="font-size:18px;font-weight:600;color:var(--navy)">\u20B9'+inr(r.totals?.gd||0)+'</div>'+
+    '<div style="font-size:12px;color:var(--tx3);margin-top:2px">'+fmtDateIST(r.date)+' &middot; '+r.items.length+' item(s) &middot; '+r.items.reduce(function(s,i){return s+(parseFloat(i.boxes)||0);},0)+' Doz</div></div>'+
+    '<div style="text-align:right">'+
+    '<div style="font-size:18px;font-weight:600;color:var(--navy)">₹'+inr(r.totals?r.totals.gd||0:0)+'</div>'+
     '<div style="display:flex;gap:6px;margin-top:6px;justify-content:flex-end">'+
-    '<button onclick="reprintBill(\''+r.id+'\')" style="padding:6px 12px;background:var(--bg2);border:1px solid var(--bd);border-radius:var(--r);cursor:pointer;font-size:12px;color:var(--navy);font-family:var(--fs);display:inline-flex;align-items:center;gap:4px"><i class="ti ti-printer"></i> Print</button>'+
-    '<button onclick="deleteBill(\''+r.id+'\')" style="padding:6px 10px;background:var(--bg2);border:1px solid var(--bd);border-radius:var(--r);cursor:pointer;font-size:12px;color:var(--txd);font-family:var(--fs)"><i class="ti ti-trash"></i></button>'+
-    '</div></div></div></div>').join('');
+    '<button onclick="event.stopPropagation();reprintBill(this.dataset.id)" data-id="'+id+'" style="padding:6px 12px;background:var(--bg2);border:1px solid var(--bd);border-radius:var(--r);cursor:pointer;font-size:12px;color:var(--navy);font-family:var(--fs);display:inline-flex;align-items:center;gap:4px"><i class="ti ti-printer"></i> Print</button>'+
+    '<button onclick="event.stopPropagation();deleteBill(this.dataset.id)" data-id="'+id+'" style="padding:6px 10px;background:var(--bg2);border:1px solid var(--bd);border-radius:var(--r);cursor:pointer;font-size:12px;color:var(--txd);font-family:var(--fs)"><i class="ti ti-trash"></i></button>'+
+    '</div></div></div></div>';
+}
+function deletedRow(r){
+  const id=r.id;
+  return '<div class="bill-list-item">'+
+    '<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">'+
+    '<div><div style="font-weight:600;font-size:15px;color:var(--txd)">Invoice #'+r.invoiceNo+' <span style="font-size:11px;background:#fdecea;padding:2px 8px;border-radius:10px;color:var(--txd)">Deleted</span></div>'+
+    '<div style="font-size:13px;color:var(--tx2);margin-top:2px">'+(r.custName||'(no customer)')+'</div>'+
+    '<div style="font-size:12px;color:var(--tx3);margin-top:2px">'+fmtDateIST(r.date)+' &middot; Deleted: '+fmtDateIST((r.deletedAt||'').slice(0,10))+'</div></div>'+
+    '<div style="text-align:right">'+
+    '<div style="font-size:18px;font-weight:600;color:var(--tx3)">₹'+inr(r.totals?r.totals.gd||0:0)+'</div>'+
+    '<div style="display:flex;gap:6px;margin-top:6px;justify-content:flex-end">'+
+    '<button onclick="restoreBill(this.dataset.id)" data-id="'+id+'" style="padding:6px 12px;background:var(--bg2);border:1px solid #2e7d32;border-radius:var(--r);cursor:pointer;font-size:12px;color:#2e7d32;font-family:var(--fs);display:inline-flex;align-items:center;gap:4px"><i class="ti ti-restore"></i> Restore</button>'+
+    '</div></div></div></div>';
+}
+function renderBills(){
+  const F=STATE.billF,bt=STATE.billTab||'active';
+  const years=[...new Set(INVOICES.map(function(r){return r.date?r.date.slice(0,4):'';}).filter(Boolean))].sort().reverse();
+  const MONTHS=[['01','Jan'],['02','Feb'],['03','Mar'],['04','Apr'],['05','May'],['06','Jun'],['07','Jul'],['08','Aug'],['09','Sep'],['10','Oct'],['11','Nov'],['12','Dec']];
+  const SEL2='padding:8px 12px;font-size:13px;background:var(--bg2);border:1.5px solid var(--bd2);border-radius:var(--r);color:var(--tx);cursor:pointer;width:100%';
+  let content='';
+  if(bt==='active'){
+    let data=filterInvoices(F,[...INVOICES]).sort(function(a,b){return b.date.localeCompare(a.date);});
+    const filterHtml='<div class="card" style="margin-bottom:14px"><div class="card-title"><i class="ti ti-filter"></i>Filters</div>'+
+      '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:10px">'+
+      '<div><label class="label">Year</label><select style="'+SEL2+'" id="b-yr" onchange="STATE.billF.year=this.value;rerenderContent(renderBills)"><option value="">All years</option>'+years.map(function(y){return '<option value="'+y+'" '+(F.year===y?'selected':'')+'>'+y+'</option>';}).join('')+'</select></div>'+
+      '<div><label class="label">Month</label><select style="'+SEL2+'" id="b-mo" onchange="STATE.billF.month=this.value;rerenderContent(renderBills)"><option value="">All months</option>'+MONTHS.map(function(m){return '<option value="'+m[0]+'" '+(F.month===m[0]?'selected':'')+'>'+m[1]+'</option>';}).join('')+'</select></div>'+
+      '<div><label class="label">Date</label><input type="date" id="b-dt" value="'+F.date+'" style="padding:8px 12px;font-size:13px;background:var(--bg2);border:1.5px solid var(--bd2);border-radius:var(--r);color:var(--tx);width:100%" onchange="STATE.billF.date=this.value;rerenderContent(renderBills)"/></div>'+
+      '<div><label class="label">Customer</label><select style="'+SEL2+'" id="b-cu" onchange="STATE.billF.cust=this.value;rerenderContent(renderBills)"><option value="">All customers</option>'+MASTER.customers.map(function(cu){return '<option value="'+cu.id+'" '+(F.cust===cu.id?'selected':'')+'>'+cu.name+'</option>';}).join('')+'</select></div>'+
+      '<div><label class="label">Brand</label><select style="'+SEL2+'" id="b-br" onchange="STATE.billF.brand=this.value;rerenderContent(renderBills)"><option value="">All brands</option>'+MASTER.products.map(function(p){return '<option value="'+p.brand+'" '+(F.brand===p.brand?'selected':'')+'>'+p.brand+'</option>';}).join('')+'</select></div>'+
+      '</div><button class="sbtn" onclick="STATE.billF={year:\'\',month:\'\',date:\'\',cust:\'\',brand:\'\'}; rerenderContent(renderBills)"><i class=\"ti ti-x\"></i> Clear all</button></div>';
+    content=filterHtml+'<div class="card">'+(data.length===0?'<div style="color:var(--tx3);text-align:center;padding:24px 0">No bills found.</div>':data.map(billRow).join(''))+'</div>';
+  } else {
+    const delSorted=DELETED_INVOICES.slice().sort(function(a,b){return (b.deletedAt||'').localeCompare(a.deletedAt||'');});
+    content='<div class="card"><div style="font-size:13px;color:var(--tx2);margin-bottom:12px">Deleted invoice numbers are permanently reserved and cannot be reissued.</div>'+(delSorted.length===0?'<div style="color:var(--tx3);text-align:center;padding:24px 0">No deleted invoices.</div>':delSorted.map(deletedRow).join(''))+'</div>';
+  }
   return '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">'+
     '<div style="font-size:18px;font-weight:500">Past Bills</div>'+
-    '<div style="font-size:13px;color:var(--tx3)">'+INVOICES.length+' stored'+(isSignedIn?' in Drive':' locally')+'</div></div>'+
-    '<div class="card" style="margin-bottom:14px"><div class="card-title"><i class="ti ti-filter"></i>Filters</div>'+
-    '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:10px">'+
-    '<div><label class="label">Year</label><select style="'+SEL+';width:100%" id="b-yr" onchange="STATE.billF.year=this.value;rerenderContent(renderBills)"><option value="">All years</option>'+years.map(y=>'<option value="'+y+'" '+(F.year===y?'selected':'')+'>'+y+'</option>').join('')+'</select></div>'+
-    '<div><label class="label">Month</label><select style="'+SEL+';width:100%" id="b-mo" onchange="STATE.billF.month=this.value;rerenderContent(renderBills)"><option value="">All months</option>'+MONTHS.map(m=>'<option value="'+m[0]+'" '+(F.month===m[0]?'selected':'')+'>'+m[1]+'</option>').join('')+'</select></div>'+
-    '<div><label class="label">Date</label><input type="date" id="b-dt" value="'+F.date+'" style="'+INP+';width:100%" onchange="STATE.billF.date=this.value;rerenderContent(renderBills)"/></div>'+
-    '<div><label class="label">Customer</label><select style="'+SEL+';width:100%" id="b-cu" onchange="STATE.billF.cust=this.value;rerenderContent(renderBills)"><option value="">All customers</option>'+MASTER.customers.map(c=>'<option value="'+c.id+'" '+(F.cust===c.id?'selected':'')+'>'+c.name+'</option>').join('')+'</select></div>'+
-    '<div><label class="label">Brand</label><select style="'+SEL+';width:100%" id="b-br" onchange="STATE.billF.brand=this.value;rerenderContent(renderBills)"><option value="">All brands</option>'+MASTER.products.map(p=>'<option value="'+p.brand+'" '+(F.brand===p.brand?'selected':'')+'>'+p.brand+'</option>').join('')+'</select></div>'+
-    '</div><button class="sbtn" onclick="STATE.billF={year:\'\',month:\'\',date:\'\',cust:\'\',brand:\'\'};rerenderContent(renderBills)"><i class="ti ti-x"></i> Clear all</button></div>'+
-    '<div class="card">'+(data.length===0?'<div style="color:var(--tx3);text-align:center;padding:24px 0">No bills found.</div>':rows)+'</div>';
+    '<div style="font-size:13px;color:var(--tx3)">'+INVOICES.length+' active &middot; '+DELETED_INVOICES.length+' deleted</div></div>'+
+    '<div class="subtab-row">'+
+    '<button class="subtab '+(bt==='active'?'active':'')+'" onclick="STATE.billTab=\'active\';rerenderContent(renderBills)"><i class=\"ti ti-check\"></i>Active ('+INVOICES.length+')</button>'+
+    '<button class="subtab '+(bt==='deleted'?'active':'')+'" onclick="STATE.billTab=\'deleted\';rerenderContent(renderBills)"><i class=\"ti ti-trash\"></i>Deleted ('+DELETED_INVOICES.length+')</button>'+
+    '</div>'+content;
 }
-
 // ═══════════════════════════════════════════════════════
 // BILL ACTIONS
 // ═══════════════════════════════════════════════════════
@@ -923,8 +1118,27 @@ function reprintBill(id){
   doPrint();Object.assign(INV,saved);
 }
 function deleteBill(id){
-  if(!confirm('Delete this bill record?'))return;
-  INVOICES=INVOICES.filter(r=>r.id!==id);saveLocalInvoices();rerenderContent(renderBills);
+  if(!confirm('Delete this invoice? It will be moved to Deleted archive and its number permanently reserved.'))return;
+  const inv=INVOICES.find(r=>r.id===id);if(!inv)return;
+  inv.deletedAt=new Date().toISOString();
+  DELETED_INVOICES.push(inv);
+  INVOICES=INVOICES.filter(r=>r.id!==id);
+  reserveDeletedNo(inv.invoiceNo);
+  saveLocalInvoices();saveLocalDeleted();
+  if(isSignedIn)moveInvoiceToDeleted(inv);
+  rerenderContent(renderBills);
+  showToast('Invoice archived. Number '+inv.invoiceNo+' permanently reserved.');
+}
+function restoreBill(id){
+  const inv=DELETED_INVOICES.find(r=>r.id===id);if(!inv)return;
+  if(!confirm('Restore Invoice #'+inv.invoiceNo+'? It will return to active invoices.'))return;
+  delete inv.deletedAt;
+  INVOICES.push(inv);
+  DELETED_INVOICES=DELETED_INVOICES.filter(r=>r.id!==id);
+  saveLocalInvoices();saveLocalDeleted();
+  if(isSignedIn)restoreInvoiceFromDeleted(inv);
+  rerenderContent(renderBills);
+  showToast('Invoice #'+inv.invoiceNo+' restored!');
 }
 
 // ═══════════════════════════════════════════════════════
@@ -966,18 +1180,29 @@ function saveTr(){if(!STATE.trF.name.trim())return;if(STATE.trEdit){MASTER.trans
 function editTr(id){const t=MASTER.transporters.find(x=>x.id===id);if(!t)return;STATE.trF={name:t.name};STATE.trEdit=id;render();}
 function delTr(id){if(!confirm('Delete?'))return;MASTER.transporters=MASTER.transporters.filter(t=>t.id!==id);saveLocalMaster();render();}
 function cancelTr(){STATE.trEdit=null;STATE.trF={name:''};render();}
-function addItem(){INV.items.push(mkItem());render();}
+function addItem(){const sy=window.scrollY;INV.items.push(mkItem());render();requestAnimationFrame(()=>window.scrollTo(0,sy));}
 function delItem(id){INV.items=INV.items.filter(i=>i.id!==id);render();}
-function resetInv(){if(!confirm('Reset invoice form?'))return;INV={no:'',date:todayISO(),sc:CO.sc,custId:'',fromLoc:'Delhi',toLoc:'',rrNo:'',marks:'',noPack:'',weight:'',despBy:'',dosDate:'',freight:'',vehicleNo:'',items:[mkItem()],disc1:'',disc2Pct:'',discDesc:'',cgstR:'',sgstR:'',igstR:'5',ro:''};render();}
+function resetInv(){if(!confirm('Reset invoice form?'))return;INV={no:getSuggestedInvNo(),date:todayISTISO(),sc:CO.sc,custId:'',fromLoc:'Delhi',toLoc:'',rrNo:'',marks:'',noPack:'',weight:'',despBy:'',dosDate:'',freight:'',vehicleNo:'',items:[mkItem()],disc1:'',disc2Pct:'',discDesc:'',cgstR:'',sgstR:'',igstR:'5',ro:''};render();}
 
 // ═══════════════════════════════════════════════════════
 // INIT
 // ═══════════════════════════════════════════════════════
-loadLocal();
-render();
-window.addEventListener('load',()=>{
-  setTimeout(initGoogleAuth,500);
-});
+function init(){
+  try{
+    loadLocal();
+    INV.no=getSuggestedInvNo();
+    render();
+    setTimeout(initGoogleAuth,800);
+  }catch(e){
+    console.error('Init error:',e);
+    document.getElementById('content').innerHTML='<div style="padding:40px;text-align:center;color:#c62828"><h3>Error loading tool</h3><p style="margin-top:10px;font-size:13px">'+e.message+'</p></div>';
+  }
+}
+if(document.readyState==='loading'){
+  document.addEventListener('DOMContentLoaded',init);
+}else{
+  init();
+}
 </script>
 </body>
 </html>
