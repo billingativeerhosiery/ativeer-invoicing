@@ -11,6 +11,8 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js" defer></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
 <style>
 :root{
   --bg:#fff;--bg2:#f7f6f3;--bg3:#f0ede8;
@@ -181,12 +183,13 @@ const inr=(n)=>parseFloat(n||0).toLocaleString("en-IN",{minimumFractionDigits:2,
 // ═══════════════════════════════════════════════════════
 let MASTER={
   customers:[{id:"c1",name:"ZAM ZAM ENTERPRISE PVT. LTD",addr:"HIMMATNAGAR - 383001 (SURAT)",gstin:"24AAACZ1769N1ZU",sc:"24"}],
-  products:[{id:"p1",brand:"PANTHER",desc:"Force Outerwear",hsn:"6107",rate:320},{id:"p2",brand:"TIGER",desc:"MAK Outerwear",hsn:"6107",rate:425}],
+  products:[{id:"p1",brand:"PANTHER",desc:"Force Outerwear",hsn:"6107",rate:320,unitOfQty:"Doz"},{id:"p2",brand:"TIGER",desc:"MAK Outerwear",hsn:"6107",rate:425,unitOfQty:"Doz"}],
   locations:[{id:"loc1",name:"Delhi"},{id:"loc2",name:"Mumbai"},{id:"loc3",name:"Surat"}],
-  transporters:[{id:"tr1",name:"MALHOTRA TRANSPORT"},{id:"tr2",name:"VRL LOGISTICS"}]
+  transporters:[{id:"tr1",name:"MALHOTRA TRANSPORT"},{id:"tr2",name:"VRL LOGISTICS"}],
+  banks:[{id:"b1",name:"INDIAN OVERSEAS BANK",branch:"KAROL BAGH(0035) BRANCH PIN-110005",ifsc:"IOBA0000035",acno:"003502000019360"}]
 };
-let INV={no:"",date:todayISTISO(),sc:CO.sc,custId:"",fromLoc:"Delhi",toLoc:"",rrNo:"",marks:"",noPack:"",weight:"",despBy:"",dosDate:"",freight:"",vehicleNo:"",items:[mkItem()],disc1:"",disc2Pct:"",discDesc:"",cgstR:"",sgstR:"",igstR:"5",ro:""};
-let STATE={tab:"invoice",mTab:"customers",billTab:"active",cf:{name:"",addr:"",gstin:"",sc:""},pf:{brand:"",desc:"",hsn:"",rate:""},locF:{name:""},trF:{name:""},cfEdit:null,pfEdit:null,locEdit:null,trEdit:null,dashF:{year:"",month:"",date:"",cust:"",brand:"",sort:"date-desc"},billF:{year:"",month:"",date:"",cust:"",brand:""}};
+let INV={no:"",date:todayISTISO(),sc:CO.sc,custId:"",fromLoc:"Delhi",toLoc:"",rrNo:"",marks:"",noPack:"",weight:"",despBy:"",dosDate:"",freight:"",vehicleNo:"",items:[mkItem()],disc1:"",disc2Pct:"",discDesc:"",cgstR:"",sgstR:"",igstR:"5",ro:"",bankId:"b1"};
+let STATE={tab:"invoice",mTab:"customers",billTab:"active",editingId:null,bf:{name:"",branch:"",ifsc:"",acno:""},bfEdit:null,cf:{name:"",addr:"",gstin:"",sc:""},pf:{brand:"",desc:"",hsn:"",rate:"",unitOfQty:""},locF:{name:""},trF:{name:""},cfEdit:null,pfEdit:null,locEdit:null,trEdit:null,dashF:{year:"",month:"",date:"",cust:"",brand:"",sort:"date-desc"},billF:{year:"",month:"",date:"",cust:"",brand:""}};
 let INVOICES=[];
 let DELETED_INVOICES=[];
 let COUNTER={fy:'',lastNum:0,usedNums:[]};
@@ -237,6 +240,7 @@ function scheduleSaveCounter(){
 
 let invoicesFolderId=null;
 let deletedFolderId=null;
+let fyFolders={};
 let masterLastModified=null;
 let CHARTS={};
 let PENDING_CHARTS=null;
@@ -460,6 +464,78 @@ async function restoreInvoiceFromDeleted(invoice){
     }
   }catch(e){console.error('Restore invoice failed',e);}
 }
+
+// ═══════════════════════════════════════════════════════
+// FY FOLDER + PDF UPLOAD
+// ═══════════════════════════════════════════════════════
+async function getFYFolder(fy){
+  if(fyFolders[fy])return fyFolders[fy];
+  const id=await getOrCreateFolder(driveFolder,'FY-'+fy);
+  fyFolders[fy]=id;return id;
+}
+async function uploadBlobToDrive(fname,blob,parentId){
+  if(!gToken)return;
+  try{
+    const r=await driveReq(`https://www.googleapis.com/drive/v3/files?q=name='${fname}' and '${parentId}' in parents and trashed=false&fields=files(id)`);
+    const d=await r.json();
+    const existingId=d.files&&d.files.length>0?d.files[0].id:null;
+    const formData=new FormData();
+    const meta=existingId?{}:{name:fname,parents:[parentId]};
+    formData.append('metadata',new Blob([JSON.stringify(meta)],{type:'application/json'}));
+    formData.append('file',blob,fname);
+    const url=existingId?`https://www.googleapis.com/upload/drive/v3/files/${existingId}?uploadType=multipart`:'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
+    await fetch(url,{method:existingId?'PATCH':'POST',headers:{Authorization:'Bearer '+gToken},body:formData});
+  }catch(e){console.error('uploadBlobToDrive failed',e);}
+}
+async function generatePDFBlob(snap){
+  if(!window.html2canvas||!window.jspdf)return null;
+  const savedINV=JSON.parse(JSON.stringify(INV));
+  Object.assign(INV,snap);
+  const copies=['▶ Original Bill','▶ Duplicate Copy','▶ Triplicate Copy'];
+  const{jsPDF}=window.jspdf;
+  const pdf=new jsPDF('p','mm','a4');
+  for(let i=0;i<copies.length;i++){
+    const el=document.createElement('div');
+    el.style.cssText='position:fixed;left:-9999px;top:0;width:780px;background:#fff;z-index:-999';
+    el.innerHTML=billHTML(copies[i]);
+    document.body.appendChild(el);
+    await new Promise(r=>setTimeout(r,200));
+    const canvas=await html2canvas(el,{scale:1.5,useCORS:true,backgroundColor:'#ffffff',logging:false});
+    document.body.removeChild(el);
+    if(i>0)pdf.addPage();
+    pdf.addImage(canvas.toDataURL('image/jpeg',0.92),'JPEG',0,0,210,297);
+  }
+  Object.assign(INV,savedINV);
+  return pdf.output('blob');
+}
+async function savePDFToDrive(invoice){
+  if(!isSignedIn||!driveFolder)return;
+  try{
+    const fy=invoice.invoiceNo?invoice.invoiceNo.split('/')[0]:getFY();
+    const fyFolderId=await getFYFolder(fy);
+    const snap=invoice.snapshot||invoice;
+    setSyncStatus('syncing');
+    const blob=await generatePDFBlob(snap);
+    if(!blob){setSyncStatus('error');return;}
+    const fname=invoice.invoiceNo.replace(/\//g,'-')+'.pdf';
+    await uploadBlobToDrive(fname,blob,fyFolderId);
+    setSyncStatus('ok');
+    showToast('PDF saved to Drive (FY-'+fy+' folder)');
+  }catch(e){setSyncStatus('error');console.error('savePDFToDrive failed',e);}
+}
+// ═══════════════════════════════════════════════════════
+// EDIT INVOICE
+// ═══════════════════════════════════════════════════════
+function editInvoice(id){
+  const rec=INVOICES.find(r=>r.id===id);
+  if(!rec){showToast('Invoice not found');return;}
+  const snap=rec.snapshot||rec;
+  Object.assign(INV,JSON.parse(JSON.stringify(snap)));
+  STATE.editingId=id;
+  STATE.tab='invoice';
+  render();
+  window.scrollTo(0,0);
+}
 function showConflictDialog(){
   const msg='⚠️ Master data was updated by another user while you were editing.\n\nOptions:\n[OK] = Reload their version (your unsaved changes lost)\n[Cancel] = Keep your changes and overwrite theirs';
   if(confirm(msg)){
@@ -480,6 +556,12 @@ function scheduleSave(type){
 // ═══════════════════════════════════════════════════════
 function loadLocal(){
   try{const r=localStorage.getItem("ah_master_v7");if(r)MASTER=JSON.parse(r);}catch(e){}
+  // Data migration: ensure all arrays exist
+  if(!MASTER.banks)MASTER.banks=[{id:"b1",name:"INDIAN OVERSEAS BANK",branch:"KAROL BAGH(0035) BRANCH PIN-110005",ifsc:"IOBA0000035",acno:"003502000019360"}];
+  if(!MASTER.locations)MASTER.locations=[];
+  if(!MASTER.transporters)MASTER.transporters=[];
+  if(!MASTER.products)MASTER.products=[];
+  if(!MASTER.customers)MASTER.customers=[];
   try{const r=localStorage.getItem("ah_invoices_v7");if(r)INVOICES=JSON.parse(r);}catch(e){}
   try{const r=localStorage.getItem("ah_deleted_v7");if(r)DELETED_INVOICES=JSON.parse(r);}catch(e){}
   loadLocalCounter();
@@ -566,7 +648,7 @@ function brandSel(id,brand){
   INV.items=INV.items.map(it=>{
     if(it.id!==id)return it;
     const u={...it,brand};
-    if(pr){u.desc=pr.desc;u.hsn=pr.hsn;u.rate=String(pr.rate);}
+    if(pr){u.desc=pr.desc;u.hsn=pr.hsn;u.rate=String(pr.rate);u.unitOfQty=pr.unitOfQty||'';}
     u.amount=(parseFloat(u.rate)||0)*(parseFloat(u.boxes)||0);
     return u;
   });
@@ -574,6 +656,7 @@ function brandSel(id,brand){
   if(item){
     ['mob_','dsk_'].forEach(pfx=>{
       ['desc','hsn','rate'].forEach(f=>{const el=document.getElementById(pfx+'i'+f+'_'+id);if(el)el.value=item[f];});
+      const uEl=document.getElementById(pfx+'iunit_'+id);if(uEl)uEl.value=item.unitOfQty||'';
     });
     document.querySelectorAll('[data-iamt="'+id+'"]').forEach(el=>{
       el.innerHTML=item.amount?('\u20B9'+inr(item.amount)):'\u2014';
@@ -617,7 +700,8 @@ function billHTML(copyLabel){
   const cs='border:1px solid #000;padding:3px 5px;font-size:9.5px';
   const iRows=INV.items.map(it=>
     '<tr><td style="'+cs+';text-align:center">'+it.brand+'</td>'+
-    '<td style="'+cs+';text-align:center">'+(it.boxes?(it.boxes+' Doz'):'')+
+    '<td style="'+cs+';text-align:center">'+(it.boxes||'')+
+    '</td><td style="'+cs+';text-align:center">'+(it.unitOfQty||'')+
     '</td><td style="'+cs+'">'+it.desc+
     '</td><td style="'+cs+';text-align:center">'+it.hsn+
     '</td><td style="'+cs+';text-align:right">'+(it.rate?it.rate+'/-':'')+
@@ -630,13 +714,13 @@ function billHTML(copyLabel){
     '<tr><td style="border:1px solid #000;height:18px"></td><td style="border:1px solid #000"></td>'+
     '<td style="border:1px solid #000"></td><td style="border:1px solid #000"></td>'+
     '<td style="border:1px solid #000"></td><td style="border:1px solid #000"></td>'+
-    '<td style="border:1px solid #000;width:22px"></td></tr>'
+    '<td style="border:1px solid #000"></td><td style="border:1px solid #000;width:22px"></td></tr>'
   ).join('');
 
   // Discount rows — Amount first, then discount, then further discount
   let discRows='';
   if(T.d1>0||T.d2>0){
-    const boxCell='<td colspan="2" style="'+cs+';text-align:center;font-weight:700;vertical-align:top">'+(T.tb>0?T.tb+'<br/><span style="font-weight:400">Box</span>':'')+
+    const boxCell='<td colspan="3" style="'+cs+';text-align:center;font-weight:700">'+(T.tb>0?String(T.tb):'')+
     '</td>';
     // Row 1: Amount label + subtotal
     discRows+='<tr>'+boxCell+
@@ -647,7 +731,7 @@ function billHTML(copyLabel){
     // Row 2: Discount with description
     if(T.d1>0){
       const dDesc=INV.discDesc?('('+INV.discDesc+')'):'';
-      discRows+='<tr><td colspan="2" style="'+cs+'"></td>'+
+      discRows+='<tr><td colspan="3" style="'+cs+'"></td>'+
         '<td style="'+cs+';text-align:right">Discount<br/>'+dDesc+'</td>'+
         '<td colspan="2" style="'+cs+'"></td>'+
         '<td style="'+cs+';text-align:right">-'+T.d1.toFixed(2)+'</td>'+
@@ -657,21 +741,21 @@ function billHTML(copyLabel){
     if(T.d2>0){
       // Row: intermediate subtotal after disc1 (only if disc1 also present)
       if(T.d1>0){
-        discRows+='<tr><td colspan="2" style="'+cs+'"></td>'+
+        discRows+='<tr><td colspan="3" style="'+cs+'"></td>'+
           '<td style="'+cs+'"></td>'+
           '<td colspan="2" style="'+cs+'"></td>'+
           '<td style="'+cs+';text-align:right">'+T.afterD1.toFixed(2)+'</td>'+
           '<td style="border:1px solid #000;width:22px"></td></tr>';
       }
       // Row: "Further Discount (X%)" label AND deduction on SAME row
-      discRows+='<tr><td colspan="2" style="'+cs+'"></td>'+
+      discRows+='<tr><td colspan="3" style="'+cs+'"></td>'+
         '<td style="'+cs+';text-align:right">Further Discount ('+T.d2Pct+'%)</td>'+
         '<td colspan="2" style="'+cs+'"></td>'+
         '<td style="'+cs+';text-align:right">-'+T.d2.toFixed(2)+'</td>'+
         '<td style="border:1px solid #000;width:22px"></td></tr>';
     }
   } else {
-    discRows='<tr><td colspan="2" style="'+cs+';text-align:center;font-weight:700">'+(T.tb>0?T.tb+'<br/><span style="font-weight:400">Box</span>':'')+
+    discRows='<tr><td colspan="2" style="'+cs+';text-align:center;font-weight:700">'+(T.tb>0?String(T.tb):'')+
     '</td><td colspan="5" style="border:1px solid #000"></td></tr>';
   }
 
@@ -722,10 +806,10 @@ function billHTML(copyLabel){
     '<td style="padding:4px 8px;vertical-align:top;font-size:9.5px">'+transRight+'</td>'+
     '</tr></table>'+
     '<table style="width:100%;border-collapse:collapse;border:1px solid #000;border-top:none;table-layout:fixed">'+
-    '<colgroup><col style="width:62px"/><col style="width:54px"/><col/><col style="width:50px"/><col style="width:52px"/><col style="width:52px"/><col style="width:22px"/></colgroup>'+
+    '<colgroup><col style="width:56px"/><col style="width:38px"/><col style="width:36px"/><col/><col style="width:44px"/><col style="width:44px"/><col style="width:44px"/><col style="width:22px"/></colgroup>'+
     '<thead><tr>'+
     '<th rowspan="2" style="border:1px solid #000;padding:3px;text-align:center;font-size:9.5px;vertical-align:middle">Quality</th>'+
-    '<th rowspan="2" style="border:1px solid #000;padding:3px;text-align:center;font-size:9.5px;vertical-align:middle">Boxes</th>'+
+    '<th rowspan="2" style="border:1px solid #000;padding:3px;text-align:center;font-size:9.5px;vertical-align:middle">Qty</th>'+'<th rowspan="2" style="border:1px solid #000;padding:2px;text-align:center;font-size:9px;vertical-align:middle">Unit</th>'+
     '<th rowspan="2" style="border:1px solid #000;padding:3px;text-align:center;font-size:9.5px;vertical-align:middle;letter-spacing:2px">D E S C R I P T I O N</th>'+
     '<th rowspan="2" style="border:1px solid #000;padding:3px 2px;text-align:center;font-size:9.5px;vertical-align:middle">HSN<br/>CODE</th>'+
     '<th rowspan="2" style="border:1px solid #000;padding:3px;text-align:center;font-size:9.5px;vertical-align:middle">RATE</th>'+
@@ -735,7 +819,8 @@ function billHTML(copyLabel){
     '<th style="border:1px solid #000;padding:2px;text-align:center;font-size:8px">P.</th>'+
     '</tr></thead><tbody>'+iRows+eRows+discRows+'</tbody></table>'+
     '<table style="width:100%;border-collapse:collapse;border:1px solid #000;border-top:none"><tr>'+
-    '<td style="border-right:1px solid #000;padding:5px 8px;width:52%;vertical-align:top;font-size:9.5px"><strong>BANK DETAILS :</strong> '+CO.bank+'<br/>IFSC : '+CO.ifsc+'&nbsp;&nbsp;&nbsp;&nbsp;A/C NO. '+CO.acno+'</td>'+
+    '<td style="border-right:1px solid #000;padding:5px 8px;width:52%;vertical-align:top;font-size:9.5px">'+(function(){const bk=getBank();return bk?'<strong>BANK DETAILS :</strong> '+bk.name+(bk.branch?', '+bk.branch:'')+'<br/>IFSC : '+bk.ifsc+'&nbsp;&nbsp;&nbsp;&nbsp;A/C NO. '+bk.acno:'<strong>BANK DETAILS :</strong> '+CO.bank+'<br/>IFSC : '+CO.ifsc+'&nbsp;&nbsp;&nbsp;&nbsp;A/C NO. '+CO.acno;})()+
+    '</td>'+
     '<td style="padding:0;vertical-align:top"><table style="width:100%;border-collapse:collapse;font-size:9.5px">'+
     '<tr><td style="border-bottom:1px solid #000;border-right:1px solid #000;padding:2px 6px">TOAL AMOUNT</td><td style="border-bottom:1px solid #000;padding:2px 5px;text-align:right">'+(T.ad>0?T.ad.toFixed(2):'')+
     '</td></tr><tr><td style="border-bottom:1px solid #000;border-right:1px solid #000;padding:2px 6px">CGST @......'+INV.cgstR+'%</td><td style="border-bottom:1px solid #000;padding:2px 5px;text-align:right">'+(T.cg>0?T.cg.toFixed(2):'')+
@@ -793,11 +878,13 @@ function submitInvoice(){
   confirmInvNo(INV.no);
   INVOICES=INVOICES.filter(x=>x.invoiceNo!==INV.no);
   const T=calc(),cust=getCust();
-  const record={id:uid(),submittedAt:new Date().toISOString(),invoiceNo:INV.no,date:INV.date,custId:INV.custId,custName:cust?cust.name:'',items:JSON.parse(JSON.stringify(INV.items)),discDesc:INV.discDesc,disc1:INV.disc1,disc2Pct:INV.disc2Pct,cgstR:INV.cgstR,sgstR:INV.sgstR,igstR:INV.igstR,ro:INV.ro,totals:T,snapshot:JSON.parse(JSON.stringify(INV))};
+  const recId=STATE.editingId?(INVOICES.find(x=>x.invoiceNo===INV.no)||{id:uid()}).id:uid();
+  const record={id:recId,submittedAt:new Date().toISOString(),invoiceNo:INV.no,date:INV.date,custId:INV.custId,custName:cust?cust.name:'',items:JSON.parse(JSON.stringify(INV.items)),discDesc:INV.discDesc,disc1:INV.disc1,disc2Pct:INV.disc2Pct,cgstR:INV.cgstR,sgstR:INV.sgstR,igstR:INV.igstR,ro:INV.ro,totals:T,snapshot:JSON.parse(JSON.stringify(INV))};
   INVOICES.push(record);
   saveLocalInvoices();
-  if(isSignedIn)saveInvoiceToDrive(record);
-  showToast('Invoice #'+INV.no+' recorded!'+(isSignedIn?' Saved to Drive!':''));
+  STATE.editingId=null;
+  if(isSignedIn){saveInvoiceToDrive(record);setTimeout(()=>savePDFToDrive(record),800);}
+  showToast('Invoice #'+INV.no+' recorded!'+(isSignedIn?' Saving PDF to Drive...':''));
 }
 
 // ═══════════════════════════════════════════════════════
@@ -834,6 +921,7 @@ function filterInvoices(F,data){
 // RENDER MASTER
 // ═══════════════════════════════════════════════════════
 function renderMaster(){
+  try{
   const{mTab,cf,pf,locF,trF,cfEdit,pfEdit,locEdit,trEdit}=STATE;
   const IS='width:100%;padding:10px 12px;background:var(--bg2);border:1.5px solid var(--bd2);border-radius:var(--r);font-size:15px;color:var(--tx)';
   const L='display:block;font-size:12px;color:var(--tx2);margin-bottom:5px;font-weight:500';
@@ -852,10 +940,21 @@ function renderMaster(){
       '<div class="g2"><div><label style="'+L+'">Quality / Brand *</label><input style="'+IS+'" value="'+pf.brand.replace(/"/g,'&quot;')+'" oninput="STATE.pf.brand=this.value" placeholder="PANTHER"/></div>'+
       '<div><label style="'+L+'">HSN code</label><input style="'+IS+'" value="'+pf.hsn+'" oninput="STATE.pf.hsn=this.value" placeholder="6107"/></div>'+
       '<div style="grid-column:1/-1"><label style="'+L+'">Description (default, editable per invoice)</label><input style="'+IS+'" value="'+pf.desc.replace(/"/g,'&quot;')+'" oninput="STATE.pf.desc=this.value" placeholder="e.g. Force Outerwear"/></div>'+
-      '<div style="grid-column:1/-1"><label style="'+L+'">Default rate (\u20B9) \u2014 editable per invoice</label><input type="number" style="'+IS+'" value="'+pf.rate+'" oninput="STATE.pf.rate=this.value" placeholder="0"/></div></div>'+
+      '<div><label style="'+L+'">Default rate (\u20B9) \u2014 editable per invoice</label><input type="number" style="'+IS+'" value="'+pf.rate+'" oninput="STATE.pf.rate=this.value" placeholder="0"/></div>'+
+      '<div><label style="'+L+'">Unit of Qty (e.g. Doz, Boxes, Pcs)</label><input style="'+IS+'" value="'+(pf.unitOfQty||'').replace(/"/g,'&quot;')+'" oninput="STATE.pf.unitOfQty=this.value" placeholder="e.g. Doz"/></div></div>'+
       '<div style="display:flex;gap:10px"><button class="pbtn" onclick="saveProd()"><i class="ti ti-device-floppy"></i>'+(pfEdit?'Update':'Add product')+'</button>'+(pfEdit?'<button class="sbtn" onclick="cancelProd()">Cancel</button>':'')+
       '</div></div>';
     list='<div class="card"><div class="card-title"><i class="ti ti-box"></i>Products ('+MASTER.products.length+')</div>'+(MASTER.products.length===0?'<div style="color:var(--tx3);text-align:center;padding:20px 0">No products yet</div>':MASTER.products.map(p=>'<div class="list-item"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div class="list-item-name">'+p.brand+' <span class="pill">HSN: '+p.hsn+'</span></div><div class="list-item-sub">'+p.desc+'</div></div><div style="font-size:18px;font-weight:600;color:var(--navy)">\u20B9'+p.rate+'/-</div></div><div class="list-item-actions"><button class="sbtn" onclick="editProd(\''+p.id+'\')"><i class="ti ti-edit"></i> Edit</button><button class="sbtn" style="color:var(--txd)" onclick="delProd(\''+p.id+'\')"><i class="ti ti-trash"></i></button></div></div>').join(''))+'</div>';
+  } else if(mTab==='banks'){
+    const{bf,bfEdit}=STATE;
+    form='<div class="card"><div class="card-title"><i class="ti ti-'+(bfEdit?'pencil':'plus')+'"></i>'+(bfEdit?'Edit bank account':'Add bank account')+'</div>'+
+      '<div class="g2"><div style="grid-column:1/-1"><label style="'+L+'">Bank name *</label><input style="'+IS+'" value="'+bf.name.replace(/"/g,'&quot;')+'" oninput="STATE.bf.name=this.value" placeholder="e.g. INDIAN OVERSEAS BANK"/></div>'+
+      '<div style="grid-column:1/-1"><label style="'+L+'">Branch</label><input style="'+IS+'" value="'+bf.branch.replace(/"/g,'&quot;')+'" oninput="STATE.bf.branch=this.value" placeholder="e.g. KAROL BAGH(0035) BRANCH PIN-110005"/></div>'+
+      '<div><label style="'+L+'">IFSC code</label><input style="'+IS+'" value="'+bf.ifsc+'" oninput="STATE.bf.ifsc=this.value" placeholder="e.g. IOBA0000035"/></div>'+
+      '<div><label style="'+L+'">Account number</label><input style="'+IS+'" value="'+bf.acno+'" oninput="STATE.bf.acno=this.value" placeholder="Account number"/></div></div>'+
+      '<div style="display:flex;gap:10px"><button class="pbtn" onclick="saveBank()"><i class="ti ti-device-floppy"></i>'+(bfEdit?'Update':'Add bank')+'</button>'+(bfEdit?'<button class="sbtn" onclick="cancelBank()">Cancel</button>':'')+
+      '</div></div>';
+    list='<div class="card"><div class="card-title"><i class="ti ti-building-bank"></i>Bank Accounts ('+(MASTER.banks||[]).length+')</div>'+((MASTER.banks||[]).length===0?'<div style="color:var(--tx3);text-align:center;padding:20px 0">No bank accounts yet</div>':((MASTER.banks)||[]).map(b=>'<div class="list-item"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div class="list-item-name">'+b.name+'</div><div class="list-item-sub">'+b.branch+'</div><div class="list-item-meta">IFSC: '+b.ifsc+' &middot; A/C: '+b.acno+'</div></div></div><div class="list-item-actions"><button class="sbtn" onclick="editBank(\''+b.id+'\')">&nbsp;<i class="ti ti-edit"></i> Edit</button><button class="sbtn" style="color:var(--txd)" onclick="deleteBank(\''+b.id+'\')">&nbsp;<i class="ti ti-trash"></i></button></div></div>').join(''))+'</div>';
   } else {
     form='<div class="card"><div class="card-title"><i class="ti ti-map-pin"></i>Add Location (From / To)</div>'+
       '<div style="margin-bottom:12px"><label style="'+L+'">Location name *</label><input style="'+IS+'" value="'+locF.name.replace(/"/g,'&quot;')+'" oninput="STATE.locF.name=this.value" placeholder="e.g. Delhi, Surat"/></div>'+
@@ -872,13 +971,12 @@ function renderMaster(){
   return syncInfo+
     '<div class="subtab-row"><button class="subtab '+(mTab==='customers'?'active':'')+'" onclick="setMTab(\'customers\')"><i class="ti ti-users"></i>Customers</button>'+
     '<button class="subtab '+(mTab==='products'?'active':'')+'" onclick="setMTab(\'products\')"><i class="ti ti-box"></i>Products</button>'+
-    '<button class="subtab '+(mTab==='dispatch'?'active':'')+'" onclick="setMTab(\'dispatch\')"><i class="ti ti-truck"></i>Dispatch</button></div>'+
+    '<button class="subtab '+(mTab==='dispatch'?'active':'')+'" onclick="setMTab(\'dispatch\')"><i class="ti ti-truck"></i>Dispatch</button>'+
+    '<button class="subtab '+(mTab==='banks'?'active':'')+'" onclick="setMTab(\'banks\')"><i class="ti ti-building-bank"></i>Banks</button></div>'+
     form+list;
-}
 
-// ═══════════════════════════════════════════════════════
-// RENDER INVOICE
-// ═══════════════════════════════════════════════════════
+  }catch(e){console.error('renderMaster error:',e);return '<div style="padding:20px;color:var(--txd)">Error loading Master Data: '+e.message+'</div>';}
+}
 function renderInvoice(){
   const T=calc(),cust=getCust();
   const IS='width:100%;padding:9px 12px;background:var(--bg2);border:1.5px solid var(--bd2);border-radius:var(--r);font-size:15px;color:var(--tx)';
@@ -896,6 +994,7 @@ function renderInvoice(){
       '<input id="mob_idesc_'+it.id+'" value="'+it.desc.replace(/"/g,'&quot;')+'" oninput="upField(\''+it.id+'\',\'desc\',this.value)" style="'+IS+'"/></div>'+
       '<div style="display:flex;gap:10px;align-items:flex-end">'+
       '<div style="flex:1"><label class="label">HSN</label><input id="mob_ihsn_'+it.id+'" value="'+it.hsn+'" oninput="upField(\''+it.id+'\',\'hsn\',this.value)" style="'+IS+'"/></div>'+
+      '<div style="flex:1"><label class="label">Unit of Qty</label><input id="mob_iunit_'+it.id+'" value="'+(it.unitOfQty||'')+'" oninput="upField(\''+it.id+'\',\'unitOfQty\',this.value)" placeholder="Doz" style="'+IS+'"/></div>'+
       '<div style="flex:1"><label class="label">Rate \u20B9</label><input id="mob_irate_'+it.id+'" type="number" value="'+it.rate+'" oninput="upField(\''+it.id+'\',\'rate\',this.value)" inputmode="decimal" style="'+IS+'"/></div>'+
       '<div style="text-align:right;flex-shrink:0"><div style="font-size:11px;color:var(--tx3);margin-bottom:2px">Amount</div>'+
       '<div data-iamt="'+it.id+'" style="font-size:19px;font-weight:600;color:var(--navy)">'+(it.amount?('\u20B9'+inr(it.amount)):'\u2014')+'</div></div>'+
@@ -909,6 +1008,7 @@ function renderInvoice(){
     return '<tr style="border-bottom:1px solid var(--bd)">'+
       '<td style="padding:5px 6px;width:118px"><select style="'+SELd+'" onchange="brandSel(\''+it.id+'\',this.value)"><option value="">Select...</option>'+po+'</select></td>'+
       '<td style="padding:5px 6px;width:70px"><input id="dsk_iboxes_'+it.id+'" type="number" value="'+it.boxes+'" placeholder="0" oninput="upField(\''+it.id+'\',\'boxes\',this.value)" style="'+ISd+'"/></td>'+
+      '<td style="padding:5px 6px;width:58px"><input id="dsk_iunit_'+it.id+'" data-iid="'+it.id+'" value="'+(it.unitOfQty||'')+'" placeholder="Doz" onblur="upUnit(this)" oninput="upUnit(this)" style="'+ISd+'"/>'+
       '<td style="padding:5px 6px"><input id="dsk_idesc_'+it.id+'" value="'+it.desc.replace(/"/g,'&quot;')+'" placeholder="Description" oninput="upField(\''+it.id+'\',\'desc\',this.value)" style="'+ISd+'"/></td>'+
       '<td style="padding:5px 6px;width:82px"><input id="dsk_ihsn_'+it.id+'" value="'+it.hsn+'" oninput="upField(\''+it.id+'\',\'hsn\',this.value)" style="'+ISd+'"/></td>'+
       '<td style="padding:5px 6px;width:90px"><input id="dsk_irate_'+it.id+'" type="number" value="'+it.rate+'" oninput="upField(\''+it.id+'\',\'rate\',this.value)" style="'+ISd+';text-align:right"/></td>'+
@@ -917,13 +1017,16 @@ function renderInvoice(){
       '</td></tr>';
   }).join('');
   return '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">'+
-    '<div style="font-size:18px;font-weight:500">New Invoice</div>'+
+    '<div>'+(STATE.editingId?'<div style="font-size:12px;color:#f57c00;font-weight:500;margin-bottom:4px"><i class="ti ti-pencil"></i> Editing Invoice #'+INV.no+'</div>':'')+
+    '<div style="font-size:18px;font-weight:500">'+(STATE.editingId?'Edit Invoice':'New Invoice')+'</div></div>'+
     '<div style="display:flex;gap:8px"><button class="sbtn" onclick="resetInv()"><i class="ti ti-refresh"></i> Reset</button>'+
     '<button class="pbtn" onclick="setTab(\'preview\')"><i class="ti ti-eye"></i> Preview</button></div></div>'+
     '<div class="card"><div class="card-title"><i class="ti ti-file-description"></i>Invoice details</div>'+
     '<div class="g-inv"><div><label class="label">Invoice no. *</label><input value="'+INV.no+'" oninput="upInvField(\'no\',this.value)" placeholder="e.g. 905" style="'+IS+'"/></div>'+
     '<div><label class="label">Date</label><input type="date" value="'+INV.date+'" oninput="upInvField(\'date\',this.value)" style="'+IS+'"/></div>'+
     '<div><label class="label">State code</label><input id="inv-sc" value="'+INV.sc+'" oninput="upInvField(\'sc\',this.value)" style="'+IS+'"/></div></div></div>'+
+    '<div class="card"><div class="card-title"><i class="ti ti-building-bank"></i>Bank account for this invoice</div>'+
+    '<select style="'+SEL+'" onchange="upInvField(\'bankId\',this.value)"><option value="">-- Select bank --</option>'+(MASTER.banks||[]).map(b=>'<option value="'+b.id+'" '+(INV.bankId===b.id?'selected':'')+'>'+b.name+' - '+b.acno+'</option>').join('')+'</select></div>'+
     '<div class="card"><div class="card-title"><i class="ti ti-building-store"></i>Customer / Receiver</div>'+
     '<select style="'+SEL+'" onchange="custSel(this.value)"><option value="">-- Select customer --</option>'+
     MASTER.customers.map(c=>'<option value="'+c.id+'" '+(INV.custId===c.id?'selected':'')+'>'+c.name+'</option>').join('')+
@@ -946,9 +1049,9 @@ function renderInvoice(){
     '<div class="mobile-items">'+mobItems+'</div>'+
     '<div class="desktop-table" style="overflow-x:auto;border:1px solid var(--bd);border-radius:var(--r)">'+
     '<table style="width:100%;border-collapse:collapse;min-width:600px;table-layout:fixed">'+
-    '<colgroup><col style="width:118px"/><col style="width:70px"/><col/><col style="width:82px"/><col style="width:90px"/><col style="width:105px"/><col style="width:34px"/></colgroup>'+
+    '<colgroup><col style="width:110px"/><col style="width:65px"/><col style="width:56px"/><col/><col style="width:80px"/><col style="width:86px"/><col style="width:100px"/><col style="width:34px"/></colgroup>'+
     '<thead><tr style="background:var(--bg2)"><th style="padding:10px 6px;text-align:left;font-size:12px;font-weight:500;color:var(--tx2)">Brand</th>'+
-    '<th style="padding:10px 6px;text-align:left;font-size:12px;font-weight:500;color:var(--tx2)">Boxes</th>'+
+    '<th style="padding:10px 6px;text-align:left;font-size:12px;font-weight:500;color:var(--tx2)">Qty</th>'+'<th style="padding:10px 6px;text-align:left;font-size:12px;font-weight:500;color:var(--tx2)">Unit</th>'+
     '<th style="padding:10px 6px;text-align:left;font-size:12px;font-weight:500;color:var(--tx2)">Description</th>'+
     '<th style="padding:10px 6px;text-align:left;font-size:12px;font-weight:500;color:var(--tx2)">HSN</th>'+
     '<th style="padding:10px 6px;text-align:right;font-size:12px;font-weight:500;color:var(--tx2)">Rate (\u20B9)</th>'+
@@ -975,14 +1078,12 @@ function renderInvoice(){
     '<button onclick="setTab(\'preview\')" style="min-height:48px;padding:12px 24px;background:rgba(255,255,255,0.18);border:1.5px solid rgba(255,255,255,0.35);border-radius:var(--r);font-size:14px;font-weight:500;cursor:pointer;color:#fff;font-family:var(--fs);display:inline-flex;align-items:center;gap:7px">'+
     '<i class="ti ti-eye" style="font-size:16px"></i>Preview bill</button></div></div>';
 }
-
-// ═══════════════════════════════════════════════════════
-// RENDER PREVIEW
-// ═══════════════════════════════════════════════════════
 function renderPreview(){
   return '<div class="export-row">'+
     '<button class="export-btn-xl green" onclick="doExcel()"><i class="ti ti-table-export" style="font-size:20px"></i>Excel (3 sheets)</button>'+
     '<button class="export-btn-xl red" onclick="doPrint()"><i class="ti ti-printer" style="font-size:20px"></i>Print / PDF (Triplicate)</button></div>'+
+    '<button class="sbtn" style="width:100%;justify-content:center;margin-bottom:10px;font-size:14px" onclick="setTab(\'invoice\')">'+
+    '<i class="ti ti-pencil" style="font-size:16px"></i>Edit Invoice</button>'+
     '<button class="pbtn" style="width:100%;justify-content:center;margin-bottom:14px;background:#1b5e20;font-size:15px" onclick="submitInvoice()">'+
     '<i class="ti ti-check" style="font-size:18px"></i>Submit Invoice to Dashboard</button>'+
     '<div style="font-size:12px;color:var(--tx3);text-align:center;margin-bottom:14px">PDF: 3 copies on A4 Portrait &nbsp;&middot;&nbsp; Excel: 3 sheets</div>'+
@@ -1044,10 +1145,6 @@ function renderDashboard(){
     '</div><div class="card"><div class="card-title"><i class="ti ti-list"></i>Invoices ('+data.length+')</div>'+
     (data.length===0?'<div style="color:var(--tx3);text-align:center;padding:24px 0">No invoices yet. Submit from Preview tab.</div>':rows)+'</div>';
 }
-
-// ═══════════════════════════════════════════════════════
-// RENDER PAST BILLS
-// ═══════════════════════════════════════════════════════
 function billRow(r){
   const id=r.id;
   return '<div class="bill-list-item" onclick="viewBill(this.dataset.id)" data-id="'+id+'">'+
@@ -1058,6 +1155,7 @@ function billRow(r){
     '<div style="text-align:right">'+
     '<div style="font-size:18px;font-weight:600;color:var(--navy)">₹'+inr(r.totals?r.totals.gd||0:0)+'</div>'+
     '<div style="display:flex;gap:6px;margin-top:6px;justify-content:flex-end">'+
+    '<button onclick="event.stopPropagation();editInvoice(this.dataset.id)" data-id="'+id+'" style="padding:6px 12px;background:var(--bg2);border:1px solid var(--navy);border-radius:var(--r);cursor:pointer;font-size:12px;color:var(--navy);font-family:var(--fs);display:inline-flex;align-items:center;gap:4px"><i class="ti ti-pencil"></i> Edit</button>'+
     '<button onclick="event.stopPropagation();reprintBill(this.dataset.id)" data-id="'+id+'" style="padding:6px 12px;background:var(--bg2);border:1px solid var(--bd);border-radius:var(--r);cursor:pointer;font-size:12px;color:var(--navy);font-family:var(--fs);display:inline-flex;align-items:center;gap:4px"><i class="ti ti-printer"></i> Print</button>'+
     '<button onclick="event.stopPropagation();deleteBill(this.dataset.id)" data-id="'+id+'" style="padding:6px 10px;background:var(--bg2);border:1px solid var(--bd);border-radius:var(--r);cursor:pointer;font-size:12px;color:var(--txd);font-family:var(--fs)"><i class="ti ti-trash"></i></button>'+
     '</div></div></div></div>';
@@ -1104,9 +1202,6 @@ function renderBills(){
     '<button class="subtab '+(bt==='deleted'?'active':'')+'" onclick="STATE.billTab=\'deleted\';rerenderContent(renderBills)"><i class=\"ti ti-trash\"></i>Deleted ('+DELETED_INVOICES.length+')</button>'+
     '</div>'+content;
 }
-// ═══════════════════════════════════════════════════════
-// BILL ACTIONS
-// ═══════════════════════════════════════════════════════
 function viewBill(id){
   const rec=INVOICES.find(r=>r.id===id);if(!rec||!rec.snapshot)return;
   const saved=JSON.parse(JSON.stringify(INV));Object.assign(INV,rec.snapshot);
@@ -1160,6 +1255,29 @@ function render(){
   window.scrollTo(0,0);
   if(t==='dashboard')setTimeout(initCharts,80);
 }
+
+function saveBank(){
+  const bf=STATE.bf;if(!bf.name.trim())return;
+  if(!MASTER.banks)MASTER.banks=[];
+  if(STATE.bfEdit){MASTER.banks=MASTER.banks.map(b=>b.id===STATE.bfEdit?{...bf,id:STATE.bfEdit}:b);STATE.bfEdit=null;}
+  else MASTER.banks.push({...bf,id:uid()});
+  STATE.bf={name:'',branch:'',ifsc:'',acno:''};
+  saveLocalMaster();render();
+}
+function editBank(id){
+  const b=MASTER.banks.find(x=>x.id===id);if(!b)return;
+  STATE.bf={...b};STATE.bfEdit=id;STATE.mTab='banks';render();
+}
+function deleteBank(id){
+  if(!confirm('Delete this bank account?'))return;
+  MASTER.banks=MASTER.banks.filter(b=>b.id!==id);
+  saveLocalMaster();render();
+}
+function cancelBank(){STATE.bfEdit=null;STATE.bf={name:'',branch:'',ifsc:'',acno:''};render();}
+function getBank(){
+  if(!MASTER.banks||MASTER.banks.length===0)return null;
+  return MASTER.banks.find(b=>b.id===INV.bankId)||MASTER.banks[0];
+}
 function setTab(t){STATE.tab=t;render();}
 function setMTab(t){STATE.mTab=t;render();}
 
@@ -1168,10 +1286,10 @@ function saveCust(){const cf=STATE.cf;if(!cf.name.trim())return;if(STATE.cfEdit)
 function editCust(id){const c=MASTER.customers.find(x=>x.id===id);if(!c)return;STATE.cf={...c};STATE.cfEdit=id;STATE.mTab='customers';render();}
 function delCust(id){if(!confirm('Delete?'))return;MASTER.customers=MASTER.customers.filter(c=>c.id!==id);saveLocalMaster();render();}
 function cancelCust(){STATE.cfEdit=null;STATE.cf={name:'',addr:'',gstin:'',sc:''};render();}
-function saveProd(){const pf=STATE.pf;if(!pf.brand.trim())return;if(STATE.pfEdit){MASTER.products=MASTER.products.map(p=>p.id===STATE.pfEdit?{...pf,id:STATE.pfEdit,rate:parseFloat(pf.rate)||0}:p);STATE.pfEdit=null;}else MASTER.products.push({...pf,id:uid(),rate:parseFloat(pf.rate)||0});STATE.pf={brand:'',desc:'',hsn:'',rate:''};saveLocalMaster();render();}
+function saveProd(){const pf=STATE.pf;if(!pf.brand.trim())return;if(STATE.pfEdit){MASTER.products=MASTER.products.map(p=>p.id===STATE.pfEdit?{...pf,id:STATE.pfEdit,rate:parseFloat(pf.rate)||0}:p);STATE.pfEdit=null;}else MASTER.products.push({...pf,id:uid(),rate:parseFloat(pf.rate)||0});STATE.pf={brand:'',desc:'',hsn:'',rate:'',unitOfQty:''};saveLocalMaster();render();}
 function editProd(id){const p=MASTER.products.find(x=>x.id===id);if(!p)return;STATE.pf={...p,rate:String(p.rate)};STATE.pfEdit=id;STATE.mTab='products';render();}
 function delProd(id){if(!confirm('Delete?'))return;MASTER.products=MASTER.products.filter(p=>p.id!==id);saveLocalMaster();render();}
-function cancelProd(){STATE.pfEdit=null;STATE.pf={brand:'',desc:'',hsn:'',rate:''};render();}
+function cancelProd(){STATE.pfEdit=null;STATE.pf={brand:'',desc:'',hsn:'',rate:'',unitOfQty:''};render();}
 function saveLoc(){if(!STATE.locF.name.trim())return;if(STATE.locEdit){MASTER.locations=MASTER.locations.map(l=>l.id===STATE.locEdit?{name:STATE.locF.name,id:STATE.locEdit}:l);STATE.locEdit=null;}else MASTER.locations.push({name:STATE.locF.name,id:uid()});STATE.locF={name:''};saveLocalMaster();render();}
 function editLoc(id){const l=MASTER.locations.find(x=>x.id===id);if(!l)return;STATE.locF={name:l.name};STATE.locEdit=id;render();}
 function delLoc(id){if(!confirm('Delete?'))return;MASTER.locations=MASTER.locations.filter(l=>l.id!==id);saveLocalMaster();render();}
@@ -1180,9 +1298,14 @@ function saveTr(){if(!STATE.trF.name.trim())return;if(STATE.trEdit){MASTER.trans
 function editTr(id){const t=MASTER.transporters.find(x=>x.id===id);if(!t)return;STATE.trF={name:t.name};STATE.trEdit=id;render();}
 function delTr(id){if(!confirm('Delete?'))return;MASTER.transporters=MASTER.transporters.filter(t=>t.id!==id);saveLocalMaster();render();}
 function cancelTr(){STATE.trEdit=null;STATE.trF={name:''};render();}
+
+function upUnit(el){
+  const id=el.dataset.id;
+  upField(id,'unitOfQty',el.value);
+}
 function addItem(){const sy=window.scrollY;INV.items.push(mkItem());render();requestAnimationFrame(()=>window.scrollTo(0,sy));}
 function delItem(id){INV.items=INV.items.filter(i=>i.id!==id);render();}
-function resetInv(){if(!confirm('Reset invoice form?'))return;INV={no:getSuggestedInvNo(),date:todayISTISO(),sc:CO.sc,custId:'',fromLoc:'Delhi',toLoc:'',rrNo:'',marks:'',noPack:'',weight:'',despBy:'',dosDate:'',freight:'',vehicleNo:'',items:[mkItem()],disc1:'',disc2Pct:'',discDesc:'',cgstR:'',sgstR:'',igstR:'5',ro:''};render();}
+function resetInv(){if(!confirm('Reset invoice form?'))return;INV={no:getSuggestedInvNo(),date:todayISTISO(),sc:CO.sc,custId:'',fromLoc:'Delhi',toLoc:'',rrNo:'',marks:'',noPack:'',weight:'',despBy:'',dosDate:'',freight:'',vehicleNo:'',items:[mkItem()],disc1:'',disc2Pct:'',discDesc:'',cgstR:'',sgstR:'',igstR:'5',ro:'',bankId:MASTER.banks&&MASTER.banks.length>0?MASTER.banks[0].id:'b1'};render();}
 
 // ═══════════════════════════════════════════════════════
 // INIT
