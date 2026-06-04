@@ -315,6 +315,30 @@ async function driveReq(url,opts={}){
   return r;
 }
 
+
+async function findFileInFolder(fname,folderId){
+  if(!folderId||!gToken)return null;
+  try{
+    const r=await driveReq(`https://www.googleapis.com/drive/v3/files?q=name='${fname}' and '${folderId}' in parents and trashed=false&fields=files(id)&pageSize=5`);
+    const d=await r.json();
+    return(d.files&&d.files.length>0)?d.files[0].id:null;
+  }catch(e){return null;}
+}
+async function moveDriveFile(fileId,fromFolderId,toFolderId){
+  if(!gToken)return;
+  await driveReq(`https://www.googleapis.com/drive/v3/files/${fileId}?addParents=${toFolderId}&removeParents=${fromFolderId}&fields=id`,{method:'PATCH',body:'{}',ct:'application/json'});
+}
+async function loadFYFoldersCache(){
+  if(!driveFolder||!gToken)return;
+  try{
+    const r=await driveReq(`https://www.googleapis.com/drive/v3/files?q='${driveFolder}' in parents and mimeType='application/vnd.google-apps.folder' and name contains 'FY-' and trashed=false&fields=files(id,name)&pageSize=100`);
+    const d=await r.json();
+    (d.files||[]).forEach(f=>{
+      const fy=f.name.replace('FY-','');
+      if(!fyFolders[fy])fyFolders[fy]=f.id;
+    });
+  }catch(e){console.error('loadFYFoldersCache failed',e);}
+}
 async function getOrCreateFolder(parentId,name){
   let q=parentId?`'${parentId}' in parents and `:'';
   q+=`name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
@@ -344,6 +368,7 @@ async function initDriveFolder(){
     driveFolder=await getOrCreateFolder(null,FOLDER_NAME);
     invoicesFolderId=await getOrCreateFolder(driveFolder,'invoices');
     deletedFolderId=await getOrCreateFolder(driveFolder,'deleted');
+    await loadFYFoldersCache();
     await loadFromDrive();
     setSyncStatus('ok');
     showToast('✅ Connected to Google Drive!');
@@ -428,9 +453,7 @@ async function saveInvoiceToDrive(invoice){
   if(!invoicesFolderId||!gToken)return;
   try{
     const fname=invoice.invoiceNo.replace(/\//g,'-')+'.json';
-    const r=await driveReq(`https://www.googleapis.com/drive/v3/files?q=name='${fname}' and '${invoicesFolderId}' in parents and trashed=false&fields=files(id)`);
-    const d=await r.json();
-    const existingId=d.files&&d.files.length>0?d.files[0].id:null;
+    const existingId=await findFileInFolder(fname,invoicesFolderId);
     await saveJsonToDrive(fname,invoice,existingId,null,invoicesFolderId);
     setSyncStatus('ok');
   }catch(e){setSyncStatus('error');console.error('Save invoice to Drive failed',e);}
@@ -438,30 +461,49 @@ async function saveInvoiceToDrive(invoice){
 async function moveInvoiceToDeleted(invoice){
   if(!deletedFolderId||!gToken)return;
   try{
-    const fname=invoice.invoiceNo.replace(/\//g,'-')+'.json';
-    // Save to deleted folder
-    await saveJsonToDrive(fname,invoice,null,null,deletedFolderId);
-    // Trash from invoices folder
-    const r=await driveReq(`https://www.googleapis.com/drive/v3/files?q=name='${fname}' and '${invoicesFolderId}' in parents and trashed=false&fields=files(id)`);
-    const d=await r.json();
-    if(d.files&&d.files.length>0){
-      await driveReq(`https://www.googleapis.com/drive/v3/files/${d.files[0].id}`,{method:'DELETE'});
+    const invNo=invoice.invoiceNo;
+    const jsonFname=invNo.replace(/\//g,'-')+'.json';
+    const pdfFname=invNo.replace(/\//g,'-')+'.pdf';
+    const fy=invNo.split('/')[0];
+    // Move JSON: invoices/ → deleted/ (use Drive move, not copy+delete)
+    const jsonId=await findFileInFolder(jsonFname,invoicesFolderId);
+    if(jsonId){
+      await moveDriveFile(jsonId,invoicesFolderId,deletedFolderId);
+      // Update content in place
+      await saveJsonToDrive(jsonFname,invoice,jsonId,null,deletedFolderId);
+    }else{
+      // Not in invoices/ yet — just create in deleted/
+      const existId=await findFileInFolder(jsonFname,deletedFolderId);
+      await saveJsonToDrive(jsonFname,invoice,existId,null,deletedFolderId);
+    }
+    // Move PDF: FY-XXXX/ → deleted/
+    if(fyFolders[fy]){
+      const pdfId=await findFileInFolder(pdfFname,fyFolders[fy]);
+      if(pdfId)await moveDriveFile(pdfId,fyFolders[fy],deletedFolderId);
     }
   }catch(e){console.error('Move to deleted failed',e);}
 }
 async function restoreInvoiceFromDeleted(invoice){
   if(!invoicesFolderId||!gToken)return;
   try{
-    const fname=invoice.invoiceNo.replace(/\//g,'-')+'.json';
-    // Save back to invoices folder
+    const invNo=invoice.invoiceNo;
+    const jsonFname=invNo.replace(/\//g,'-')+'.json';
+    const pdfFname=invNo.replace(/\//g,'-')+'.pdf';
+    const fy=invNo.split('/')[0];
     delete invoice.deletedAt;
-    await saveJsonToDrive(fname,invoice,null,null,invoicesFolderId);
-    // Remove from deleted folder
-    const r=await driveReq(`https://www.googleapis.com/drive/v3/files?q=name='${fname}' and '${deletedFolderId}' in parents and trashed=false&fields=files(id)`);
-    const d=await r.json();
-    if(d.files&&d.files.length>0){
-      await driveReq(`https://www.googleapis.com/drive/v3/files/${d.files[0].id}`,{method:'DELETE'});
+    // Move JSON: deleted/ → invoices/
+    const jsonId=await findFileInFolder(jsonFname,deletedFolderId);
+    if(jsonId){
+      await moveDriveFile(jsonId,deletedFolderId,invoicesFolderId);
+      await saveJsonToDrive(jsonFname,invoice,jsonId,null,invoicesFolderId);
+    }else{
+      const existId=await findFileInFolder(jsonFname,invoicesFolderId);
+      await saveJsonToDrive(jsonFname,invoice,existId,null,invoicesFolderId);
     }
+    // Move PDF: deleted/ → FY-XXXX/
+    const fyFolderId=await getFYFolder(fy);
+    const pdfId=await findFileInFolder(pdfFname,deletedFolderId);
+    if(pdfId)await moveDriveFile(pdfId,deletedFolderId,fyFolderId);
   }catch(e){console.error('Restore invoice failed',e);}
 }
 
